@@ -3,8 +3,7 @@ package topica.cdp.nifi.processors.json;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.io.IOUtils;
@@ -25,15 +24,15 @@ import org.json.JSONArray;
 
 
 /**
- * @author phillip
+ * @author truonglx2
  */
 @SideEffectFree
 @Tags({"Json", "cdp", "csv"})
 @CapabilityDescription("Convert Jsonarray to csv")
 public class JsonArrayToCSV extends AbstractProcessor {
 
-    private List<PropertyDescriptor> properties;
-    private Set<Relationship> relationships;
+    private static List<PropertyDescriptor> properties;
+    private static Set<Relationship> relationships;
 
     public static final String MATCH_ATTR = "match";
 
@@ -41,6 +40,10 @@ public class JsonArrayToCSV extends AbstractProcessor {
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name("SUCCESS")
             .description("Succes relationship")
+            .build();
+    public static final Relationship FAILURE = new Relationship.Builder()
+            .name("failure")
+            .description("If a FlowFile fails processing for any reason (for example, the FlowFile is not valid JSON), it will be routed to this relationship")
             .build();
 
     @Override
@@ -93,4 +96,14 @@ public class JsonArrayToCSV extends AbstractProcessor {
         return properties;
     }
 
+    static {
+
+        final List<PropertyDescriptor> _properties = new ArrayList<>();
+        properties = Collections.unmodifiableList(_properties);
+
+        final Set<Relationship> _relationships = new HashSet<>();
+        _relationships.add(SUCCESS);
+        _relationships.add(FAILURE);
+        relationships = Collections.unmodifiableSet(_relationships);
+    }
 }

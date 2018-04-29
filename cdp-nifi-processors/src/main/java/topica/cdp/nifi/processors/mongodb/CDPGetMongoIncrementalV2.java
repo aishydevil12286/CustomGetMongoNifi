@@ -21,6 +21,8 @@ import org.apache.nifi.components.AllowableValue;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.Validator;
 import org.apache.nifi.components.ValidationResult.Builder;
+import org.apache.nifi.components.state.Scope;
+import org.apache.nifi.components.state.StateMap;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.logging.ComponentLog;
@@ -43,6 +45,11 @@ import org.json.JSONObject;
 @Tags({"mongodb", "read", "get", "cdp"})
 @InputRequirement(Requirement.INPUT_FORBIDDEN)
 @CapabilityDescription("Get mongo v2 cdp, result CSV or Json Array")
+@Stateful(scopes = Scope.CLUSTER, description = "After performing a query on the specified table, the maximum values for "
+        + "the specified column(s) will be retained for use in future executions of the query. This allows the Processor "
+        + "to fetch only those records that have max values greater than the retained values. This can be used for "
+        + "incremental fetching, fetching of newly added rows, etc. To clear the maximum values, clear the state of the processor "
+        + "per the State Management documentation")
 public class CDPGetMongoIncrementalV2 extends AbstractMongoProcessor {
     public static final Validator DOCUMENT_VALIDATOR = (subject, value, context) -> {
         Builder builder = new Builder();
@@ -57,10 +64,11 @@ public class CDPGetMongoIncrementalV2 extends AbstractMongoProcessor {
             } catch (RuntimeException var7) {
                 reason = var7.getLocalizedMessage();
             }
-
             return builder.explanation(reason).valid(reason == null).build();
         }
     };
+
+
     static final Relationship REL_SUCCESS = (new org.apache.nifi.processor.Relationship.Builder()).name("success").description("All files are routed to success").build();
     static final PropertyDescriptor QUERY;
 
@@ -191,12 +199,15 @@ public class CDPGetMongoIncrementalV2 extends AbstractMongoProcessor {
                 String query_incremental = context.getProperty(QUERY_INCREMENTAL).evaluateAttributeExpressions().getValue();
                 Document query1 = context.getProperty(QUERY).isSet() ? Document.parse(context.getProperty(QUERY).evaluateAttributeExpressions().getValue()) : null;
                 int limit = context.getProperty(LIMIT).isSet() ? context.getProperty(LIMIT).evaluateAttributeExpressions().asInteger() : -1;
+                Calendar calTo = Calendar.getInstance();
+                Date toDate = calTo.getTime();
+                MongoCursor<Document> cursor = null;
                 while (fromDate.compareTo(finishDate) <= 0) {
                     try {
-                        Calendar calTo = Calendar.getInstance();
+                        calTo.clear();
                         calTo.setTime(fromDate);
                         calTo.add(Calendar.DATE, range);
-                        Date toDate = calTo.getTime();
+                        toDate = calTo.getTime();
 
                         if (query1 != null) {
                             query1.append(query_incremental, new Document("$gte", fromDate).append("$lt", toDate));
@@ -217,7 +228,7 @@ public class CDPGetMongoIncrementalV2 extends AbstractMongoProcessor {
                             it.limit(limit);
                         }
 
-                        final MongoCursor<Document> cursor = it.iterator();
+                        cursor = it.iterator();
                         List<Document> documents = new ArrayList<>();
                         try {
                             while (cursor.hasNext()) {
@@ -246,14 +257,13 @@ public class CDPGetMongoIncrementalV2 extends AbstractMongoProcessor {
                             }
                         } catch (Exception e) {
                             logger.error(fromDate.toString(), e);
-                        } finally {
-                            logger.error(FORMAT_DATE.format(fromDate) + "---" + FORMAT_DATE.format(toDate) + "--- Size:" + documents.size());
-                            fromDate = toDate;
-                            cursor.close();
-
                         }
                     } catch (Exception es) {
                         logger.error("increment", es);
+                    } finally {
+                        fromDate = toDate;
+                        if (cursor != null) cursor.close();
+
                     }
                 }
                 session.commit();
@@ -374,7 +384,7 @@ public class CDPGetMongoIncrementalV2 extends AbstractMongoProcessor {
         FROM_DATE = (new PropertyDescriptor.Builder()).name("From Date").description("Value start(datetime:yyyy-MM-ddTHH:mm:ss.SSSZ").required(false).expressionLanguageSupported(true).addValidator(StandardValidators.NON_EMPTY_VALIDATOR).defaultValue(date).build();
         TO_DATE = (new PropertyDescriptor.Builder()).name("To Date").description("Value start(datetime:yyyy-MM-ddTHH:mm:ss.SSSZ").required(false).expressionLanguageSupported(true).addValidator(StandardValidators.NON_EMPTY_VALIDATOR).defaultValue(date).build();
 
-        JSON_TYPE_RS = new AllowableValue(JSON_TYPE_RESULT, "JSON", "Flow file result json");
+        JSON_TYPE_RS = new AllowableValue(JSON_TYPE_RESULT, "JSON Array", "Flow file result json");
         CSV_TYPE_RS = new AllowableValue(CSV_TYPE_RESULT, "CSV", "Flow file result csv");
 
         TYPE_RESULT_INCREMENTAL = (new PropertyDescriptor.Builder()).allowableValues(new AllowableValue[]{JSON_TYPE_RS, CSV_TYPE_RS}).defaultValue(JSON_TYPE_RESULT).displayName("Result type").name("result-type").description("Result a flow file type: json or csv").expressionLanguageSupported(false).required(true).build();
